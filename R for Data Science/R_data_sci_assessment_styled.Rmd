@@ -1,0 +1,232 @@
+---
+title: "R for Data Science assessment"
+author: "sfhart"
+date: "9/22/2022"
+output: 
+  html_document:
+    toc: true
+    theme: united
+---
+
+<br>
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+# install.packages("plotly")
+# install.packages("tidyverse")
+# install.packages("styler")
+library(tidyverse)
+library(plotly)
+library(styler)
+```
+
+# Complete the following analysis in R and generate an RMarkdown report to show the analysis and results:
+
+### Read in the gapminder_clean.csv data as a tibble using read_csv
+
+```{r}
+# gapminder # note the rows column was unlabeled - X1 for now
+gapminder <- read_csv("gapminder_clean.csv") %>%
+  as_tibble()
+```
+
+<br>
+
+### Filter the data to include only rows where Year is 1962 and then make a scatter plot comparing 'CO2 emissions (metric tons per capita)' and gdpPercap for the filtered data.
+
+```{r}
+gapminder1962 <- gapminder %>%
+  filter(Year == 1962)
+ggplot(gapminder1962, aes(`CO2 emissions (metric tons per capita)`, gdpPercap)) +
+  geom_point() +
+  ylab("GDP per capita ($)") +
+  coord_flip()
+```
+
+<br>
+
+### On the filtered data, calculate the correlation of 'CO2 emissions (metric tons per capita)' and gdpPercap. What is the correlation and associated p value?
+
+```{r}
+# coorlation test
+gapminder1962_cor <- cor.test(gapminder1962$`CO2 emissions (metric tons per capita)`, gapminder1962$gdpPercap, use = "complete.obs")
+gapminder1962_p <- gapminder1962_cor$p.value %>%
+  signif(3)
+gapminder1962_c <- gapminder1962_cor$estimate %>%
+  round(2)
+pearson_output <- paste0("Pearson correlation: ", gapminder1962_c, "\n")
+pvalue_output <- paste0("P-value: ", gapminder1962_p)
+```
+**`r pearson_output`**
+
+**`r pvalue_output`**
+
+<br>
+
+### On the unfiltered data, answer "In what year is the correlation between 'CO2 emissions (metric tons per capita)' and gdpPercap the strongest?" Filter the dataset to that year for the next step...
+
+```{r}
+# Find strongest correlation
+years <- gapminder$Year %>% unique()
+coors <- c()
+for (y in years) {
+  gapminderyear <- gapminder %>%
+    filter(Year == y)
+  gap_cor <- cor.test(gapminderyear$`CO2 emissions (metric tons per capita)`, gapminderyear$gdpPercap, use = "complete.obs") %>%
+    .$estimate %>%
+    round(3)
+  cat(paste0(y, " pearson correlation: ", gap_cor, "\n"))
+  coors <- c(coors, gap_cor)
+}
+max_year <- years[coors == max(coors)]
+max_year_output <- paste0("\n", "Correlation is strongest in ", max_year)
+```
+**`r max_year_output`**
+
+<br>
+
+### Using plotly, create an interactive scatter plot comparing 'CO2 emissions (metric tons per capita)' and gdpPercap, where the point size is determined by pop (population) and the color is determined by the continent. You can easily convert any ggplot plot to a plotly plot using the ggplotly() command.
+
+```{r}
+plot1 <- gapminder %>%
+  filter(Year == max_year) %>%
+  ggplot(aes(x = `CO2 emissions (metric tons per capita)`, y = gdpPercap, size = pop, color = continent)) +
+  geom_point() +
+  ylab("GDP per capita ($)") +
+  coord_flip()
+ggplotly(plot1)
+```
+
+<br>
+<br>
+
+# Now, without further guidance, use your R Data Science skills (and appropriate statistical tests) to answer the following (use the unfiltered dataset):
+
+### 1. What is the relationship between continent and 'Energy use (kg of oil equivalent per capita)'? (stats test needed)
+
+```{r}
+# Filter out NAs
+gapminder2 <- gapminder %>%
+  filter(
+    !is.na("Energy use (kg of oil equivalent per capita)"),
+    !is.na(continent)
+  ) %>%
+  rename(energy = "Energy use (kg of oil equivalent per capita)")
+
+# Run anova (appropriate for quantitative data organized in over 2 categories)
+gapminder_aov <- aov(energy ~ continent, data = gapminder2, na.action = na.omit) %>%
+  summary()
+# gapminder_aov[[1]]
+gapminder_aovP <- gapminder_aov[[1]][1, 5]
+
+
+# Plot boxplots
+ggplot(gapminder2, aes(continent, energy)) +
+  # geom_violin() +
+  geom_boxplot() +
+  ylab("Energy use (kg of oil equivalent per capita)")
+
+# answer
+energy_output <- paste("A: There are big differences in energy use across the 5 continents. This can be seen in the boxplots and is highly significant by ANOVA (appropriate for quantitative data organized in over 2 categories). p-value:", gapminder_aovP)
+```
+**`r energy_output `**
+
+<br>
+
+### 2. Is there a significant difference between Europe and Asia with respect to 'Imports of goods and services (% of GDP)' in the years after 1990? (stats test needed)
+
+```{r}
+gapminder1990 <- gapminder %>%
+  filter(Year > 1990, (continent == "Asia" | continent == "Europe"))
+
+# Run t-test (appropriate to compare between two categories of quantitative data)
+test_output <- t.test(
+  filter(gapminder1990, continent == "Asia")$`Imports of goods and services (% of GDP)`,
+  filter(gapminder1990, continent == "Europe")$`Imports of goods and services (% of GDP)`
+)
+ggplot(gapminder1990, aes(continent, `Imports of goods and services (% of GDP)`)) +
+  geom_boxplot()
+
+
+output <- paste("A: There is not a significant difference between the two, as seen in the boxplot and quantified by t.test (appropriate to compare between two categories of quantitative data). p-value:", test_output$p.value)
+```
+**`r output`**
+
+<br>
+
+### 3. What is the country (or countries) that has the highest 'Population density (people per sq. km of land area)' across all years? (i.e., which country has the highest average ranking in this category across each time point in the dataset?)
+
+```{r}
+### Average for each country ###
+gapminder_countries <- gapminder %>%
+  group_by(`Country Name`) %>%
+  summarise_at(vars(`Population density (people per sq. km of land area)`), list(avg_density = mean)) %>%
+  arrange(desc(avg_density))
+# print head and plot
+# gapminder_countries %>% head()
+plot1 <- ggplot(gapminder_countries, aes(x = `Country Name`, y = avg_density)) +
+  geom_col() +
+  theme(axis.text.x = element_blank()) +
+  xlab("Countries")
+ggplotly(plot1)
+
+### Rank across each country and plot ##
+
+# make blank df
+gapminder_countries_rank <- gapminder %>%
+  mutate(rank = 1) %>%
+  filter(rank == 2)
+# Rank countries each year
+for (y in years) {
+  gapminder1 <- gapminder %>%
+    filter(Year == y) %>%
+    mutate(rank = rank(-`Population density (people per sq. km of land area)`))
+  head(gapminder1)
+  gapminder_countries_rank <- rbind(gapminder_countries_rank, gapminder1)
+}
+
+# Average for each country
+gapminder_countries_rank <- gapminder_countries_rank %>%
+  group_by(`Country Name`) %>%
+  summarise_at(vars(rank), list(avg_density_rank = mean)) %>%
+  arrange(avg_density_rank)
+# print head
+# gapminder_countries_rank %>% head()
+
+output <- paste0("A: The highest average across all years is ", gapminder_countries[1, ]$`Country Name`, ". However, the highest average RANKING (rank 1-263, averaged across the 10 years of data, if they exist for the country) is a tie between these two countries: ", gapminder_countries_rank[1, ]$`Country Name`, " and ", gapminder_countries_rank[2, ]$`Country Name`)
+```
+**`r output`**
+
+<br>
+
+### 4. What country (or countries) has shown the greatest increase in 'Life expectancy at birth, total (years)' since 1962?
+
+```{r}
+# List countries, set baseline in 1962
+countries <- gapminder$`Country Name` %>% unique()
+gapminder1962 <- filter(gapminder, Year == 1962, !is.na(`Life expectancy at birth, total (years)`))
+gapminder_exp <- mutate(gapminder, Life_expectancy_vs_1962 = 1) %>%
+  filter(Life_expectancy_vs_1962 == 2)
+
+# Make new dataframe with life exp vs 1962
+for (c in countries) {
+  exp1962 <- filter(gapminder1962, `Country Name` == c)[1, ]
+  gapminder_exp1 <- filter(gapminder, `Country Name` == c) %>%
+    mutate(Life_expectancy_vs_1962 = `Life expectancy at birth, total (years)` - exp1962$`Life expectancy at birth, total (years)`)
+  gapminder_exp <- rbind(gapminder_exp, gapminder_exp1)
+}
+
+# Plot
+plot1 <- gapminder_exp %>%
+  ggplot(aes(x = Year, y = Life_expectancy_vs_1962, color = `Country Name`)) +
+  geom_line() +
+  ylab("Life expectancy change since 1962 (years)")
+ggplotly(plot1)
+
+# Extract top value
+gapminder_exp_top <- gapminder_exp %>%
+  arrange(desc(Life_expectancy_vs_1962))
+
+output <- paste(gapminder_exp_top[1, ]$`Country Name`, "has shown the greatest increase in life expectancy.")
+```
+**`r output`**
