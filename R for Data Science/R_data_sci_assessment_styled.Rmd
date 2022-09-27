@@ -6,11 +6,12 @@ output:
   html_document:
     toc: true
     theme: united
+    code_folding: hide
 ---
 
 <br>
 
-```{r setup, include=FALSE}
+```{r setup}
 knitr::opts_chunk$set(echo = TRUE)
 # install.packages("plotly")
 # install.packages("tidyverse")
