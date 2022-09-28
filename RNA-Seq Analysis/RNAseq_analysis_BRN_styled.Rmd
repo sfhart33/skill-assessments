@@ -1,0 +1,195 @@
+---
+title: "RNAseq Analysis BRN"
+author: "sfhart"
+date: "2022-09-27"
+output: 
+  html_document:
+    toc: true
+    toc_float: true
+    theme: readable
+    code_folding: hide
+---
+
+The purpose of this challenge is to complete a full RNA-Seq analysis, including interpretation of the results in a biological context. You should pretend that you are making a report that you want to show to a biomedical collaborator who does not know bioinformatics. You should have an introduction in which you outline the research question, a results section in which you present your results, and a discussion section in which you interpret the results. It should be formatted in an aesthetic way that is easy to follow. Pre-requisite: R for Data Science/
+
+Find an RNA-Seq dataset and perform differential gene expression analysis to determine the effect of some condition on gene expression. I would recommend finding a dataset from recount2, but you can also use GEO as long as you are certain that you have obtained raw read count data and not normalized data. Additionally, your dataset must have at least 3 replicates in two or more biological conditions of interest (e.g., 3 cancer samples vs 3 normal samples). For example, ERP010786 (in recount2) would be is a suitable study. To get the data for this study, simply download the read counts from recount2 (the RSE_v2 file) -- this can be loaded into R with the load() command. The data will be loaded in a RangedSummarizedExperiment object -- see the resources below to learn how to use this for the analysis.
+
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+library(DESeq2)
+library(tidyverse)
+library(DT)
+library(factoextra)
+library(pheatmap)
+library(clusterProfiler)
+library(msigdbr)
+library(stats)
+```
+
+
+```{r}
+load("SRP038101.Rdata")
+# rse_gene
+```
+
+**Chosesn set: AML3 cells were treated with Azacytidine and compared against untreated cells. Overall design: We used RNA-Seq to detail the global programme of gene expression in human untreated and Azacytidine treated AML3 cells**
+
+<br>
+
+
+## 1. Use DESeq2 for the differential gene expression analysis. Find the DEGs between your conditions of interest.
+Make sure to add an interactable table of DEGs using a package such as DT
+
+```{r}
+
+# Make reference table of treatments
+data_treatments <- data.frame(row.names = rse_gene$run, treatment = rse_gene$title) %>%
+  separate(treatment, into = c("treatment", "replicate"))
+# data_treatments
+
+# Run DESeq2
+deseq_data <- DESeqDataSetFromMatrix(
+  countData = assay(rse_gene),
+  colData = data_treatments,
+  design = ~treatment
+)
+deseq_run <- DESeq(deseq_data)
+deseq_result <- results(deseq_run, name = "treatment_Untreated_vs_Treated")
+
+# Print out table of 1000 most significant genes
+deseq_p0.05 <- deseq_result %>%
+  as.data.frame() %>%
+  filter(padj < 0.05) %>%
+  arrange(padj)
+deseq_p0.05_count <- nrow(deseq_p0.05)
+output_note <- paste0("\nTotal differential expressed genes with adjusted p<0.05: ", deseq_p0.05_count, "\n(top 1000 shown above)")
+head(deseq_p0.05, n = 1000) %>%
+  datatable()
+```
+**`r output_note`**
+
+<br>
+
+## 2. Create a PCA plot colored by the condition of interest
+
+```{r}
+# # Different PCA method
+# # Run PCA
+#   pca_output <- prcomp(t(assay(rse_gene)))
+#
+# # Define groups
+# groups <- as.factor(data_treatments$treatment)
+#
+# # Plot
+#   pca_plot <- fviz_pca_ind(pca_output,
+#                   repel = TRUE,     # Avoid text overlapping
+#                   col.ind = groups,
+#                   #habillage = groups,
+#                   legend.title = "Groups"
+#                   )
+#   pca_plot
+
+deseq_vsd <- vst(deseq_run, blind = FALSE)
+plotPCA(deseq_vsd, intgroup = c("treatment"))
+```
+
+<br>
+
+## 3. Create a Volcano Plot
+
+```{r}
+as.data.frame(deseq_result) %>%
+  ggplot(aes(-log2FoldChange, -log10(padj))) +
+  geom_point() +
+  xlab("Log2 Fold Change\n(<- untreated vs treated ->)") +
+  ylab("-Log10 adjusted p-value")
+
+# assay(rse_gene)["ENSG00000070915.9",]
+# groups
+```
+
+<br>
+
+## 4. Create a heatmap with the top 10 over-expressed DEGs, and top 10 under-expressed DEGs.
+Top is defined by DEGs having the lowest adjusted p-values
+
+```{r}
+# List of top 10 over- and under-expressed genes
+downreg <- deseq_p0.05 %>%
+  filter(log2FoldChange > 0) %>%
+  head(n = 10) %>%
+  row.names()
+upreg <- deseq_p0.05 %>%
+  filter(log2FoldChange < 0) %>%
+  head(n = 10) %>%
+  row.names()
+up_down <- c(downreg, upreg)
+up_down_labels <- data.frame(up_or_down = c(rep("downregulated", 10), rep("upregulated", 10)), row.names = up_down)
+
+
+# Plot log-transformed heatmap
+assay(deseq_run)[downreg, ] %>%
+  rbind(., assay(deseq_run)[upreg, ]) %>%
+  log10() %>%
+  pheatmap(
+    cluster_rows = FALSE,
+    show_rownames = FALSE,
+    cluster_cols = TRUE,
+    annotation_col = select(data_treatments, treatment),
+    annotation_row = up_down_labels
+  )
+```
+
+<br>
+
+## 5. Do GSEA on the results and plot the top 5 pathways.
+For your ranking metric, use the stat column from your DESeq2 results.
+Top is defined by pathways with the lowest adjusted p-values
+
+```{r}
+
+# Download gene sets
+C5_gene_sets <- msigdbr(species = "Homo sapiens", category = "C5")
+C5_gene_sets <- C5_gene_sets %>%
+  select(gs_name, ensembl_gene)
+# head(C5_gene_sets)
+
+# Ranked list of genes from our data
+deseq_ranking_names <- deseq_result %>%
+  as.data.frame() %>%
+  rownames_to_column(var = "gene") %>%
+  separate(gene, into = c("gene_name", NA)) %>%
+  distinct(gene_name, .keep_all = TRUE) %>%
+  mutate(rank = rank(-stat, ties.method = "random")) %>%
+  arrange(desc(rank)) %>%
+  select(gene_name, rank) %>%
+  deframe()
+# head(deseq_ranking_names)
+
+# Run GSEA
+gsea_output <- GSEA(
+  geneList = deseq_ranking_names,
+  TERM2GENE = C5_gene_sets
+)
+
+# plot top 5
+gsea_output_df <- as.data.frame(gsea_output)
+gsea_top5 <- head(gsea_output_df, n = 5) %>%
+  row.names()
+# view(gsea_output_df)
+for (rep in gsea_top5) {
+  gseaplot(gsea_output,
+    geneSetID = rep,
+    title = rep
+  ) %>%
+    print()
+}
+```
+
+<br>
+
+## 7. What do the results tell you about your conditions of interest? What is the biological meaning of these results? What future experiments could you perform? (These questions don't have an exact right answer, just about thinking through the meaning of the results).
+
+**This data set was comparing AML cells in culture with and without treatment with Azacytidine, a hypomethylating chemotherapy agent. This treatment resulted in very significant differences between the treatment sets, as evidenced in particular by the number of significantly differentially expressed genes (>7500) and obvious clustering between sets in the PCA. This is not surprising, given that hypomethylation would be expected to affect gene expression genome-wide. Interestingly, this resulted in overall more DOWN-regulation than UP-regulation, which was the opposite of what I would have expected (I generally associate hypomethylation with higher expression of genes). In the gene set enrichment analysis, IMMUNOGLOBULIN and OLFACTORY_RECEPTOR hits were apparent as the top overexpressed genes, which means that the chemotherapy agent likely led to the relative overexpression of these genes. Olefactoy receptors have been noted as [possible targets for treatment of AML](https://www.biorxiv.org/content/10.1101/2022.04.12.488071v1.full), and this result suggests it could be especially helpful along with chemotherapy treatment. To follow up on the finding I would be interested to characterize AML expression within patients (this data is from cell culture), before and after chemotherapy treatment to see if any of the results here are recapitulated in relevant settings for patient treatment.**
+
