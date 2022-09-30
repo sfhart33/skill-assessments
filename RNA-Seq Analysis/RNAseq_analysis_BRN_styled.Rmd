@@ -33,7 +33,7 @@ load("SRP038101.Rdata")
 # rse_gene
 ```
 
-**Chosesn set: AML3 cells were treated with Azacytidine and compared against untreated cells. Overall design: We used RNA-Seq to detail the global programme of gene expression in human untreated and Azacytidine treated AML3 cells**
+**Here we compare AML3 cells that were treated with Azacytidine and compared against untreated cells, both in cell culture. Three replicates of each group were characterized by RNAseq, and the read counts for each gene were downloaded from an online database**
 
 <br>
 
@@ -161,6 +161,7 @@ deseq_ranking_names <- deseq_result %>%
   rownames_to_column(var = "gene") %>%
   separate(gene, into = c("gene_name", NA)) %>%
   distinct(gene_name, .keep_all = TRUE) %>%
+  filter(!is.na(stat)) %>%
   mutate(rank = rank(-stat, ties.method = "random")) %>%
   arrange(desc(rank)) %>%
   select(gene_name, rank) %>%
@@ -177,7 +178,7 @@ gsea_output <- GSEA(
 gsea_output_df <- as.data.frame(gsea_output)
 gsea_top5 <- head(gsea_output_df, n = 5) %>%
   row.names()
-# view(gsea_output_df)
+#view(gsea_output_df)
 for (rep in gsea_top5) {
   gseaplot(gsea_output,
     geneSetID = rep,
@@ -191,5 +192,5 @@ for (rep in gsea_top5) {
 
 ## 7. What do the results tell you about your conditions of interest? What is the biological meaning of these results? What future experiments could you perform? (These questions don't have an exact right answer, just about thinking through the meaning of the results).
 
-**This data set was comparing AML cells in culture with and without treatment with Azacytidine, a hypomethylating chemotherapy agent. This treatment resulted in very significant differences between the treatment sets, as evidenced in particular by the number of significantly differentially expressed genes (>7500) and obvious clustering between sets in the PCA. This is not surprising, given that hypomethylation would be expected to affect gene expression genome-wide. Interestingly, this resulted in overall more DOWN-regulation than UP-regulation, which was the opposite of what I would have expected (I generally associate hypomethylation with higher expression of genes). In the gene set enrichment analysis, IMMUNOGLOBULIN and OLFACTORY_RECEPTOR hits were apparent as the top overexpressed genes, which means that the chemotherapy agent likely led to the relative overexpression of these genes. Olefactoy receptors have been noted as [possible targets for treatment of AML](https://www.biorxiv.org/content/10.1101/2022.04.12.488071v1.full), and this result suggests it could be especially helpful along with chemotherapy treatment. To follow up on the finding I would be interested to characterize AML expression within patients (this data is from cell culture), before and after chemotherapy treatment to see if any of the results here are recapitulated in relevant settings for patient treatment.**
+**This data set was comparing AML cells in culture with and without treatment with Azacytidine, a hypomethylating chemotherapy agent. This treatment resulted in very significant differences between the treatment sets, as evidenced in particular by the number of significantly differentially expressed genes (>7500) and obvious clustering between sets in the PCA. This is not surprising, given that hypomethylation would be expected to affect gene expression genome-wide. Interestingly, this resulted in overall more DOWN-regulation than UP-regulation, which was the opposite of what I would have expected (I generally associate hypomethylation with higher expression of genes). In the gene set enrichment analysis, a number of the top hits were related to nuclear localization of proteins, which means that the chemotherapy agent likely led to the relative overexpression of these genes. This may indicate that the chemotherapy leads the cell to express these genes and import proteins into the nucleus, perhaps as either or a survival mechanism of the cell in response to treatment, or alternatively this may be a reflection of the cytotoxic effects of the chemotherapy agent itself. To follow up on the finding I would be interested to characterize AML expression within patients (this data is from cell culture), before and after chemotherapy treatment to see if any of the results here are recapitulated in relevant settings for patient treatment.**
 
