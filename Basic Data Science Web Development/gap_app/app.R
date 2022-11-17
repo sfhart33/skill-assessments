@@ -7,6 +7,7 @@ library(plotly)
     as_tibble()
 # options
   years <- gapminder$Year %>% unique()
+  gap_col <- names(gapminder)
   data_type <- gap_col[c(4:18,20)]
 
 # Define UI for app that draws a histogram ----
@@ -67,7 +68,7 @@ server <- function(input, output) {
   
   output$gapPlot <- renderPlotly({
     
-    plot1 <- gapminder2 %>%
+    plot1 <- gapminder %>%
       filter(Year == input$year) %>%
       ggplot(aes(x = .data[[input$x_ax]], y = .data[[input$y_ax]], size = pop, color = continent, text = `Country Name`)) +
       geom_point()
