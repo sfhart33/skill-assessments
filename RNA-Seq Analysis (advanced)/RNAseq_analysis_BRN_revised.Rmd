@@ -1,0 +1,283 @@
+---
+title: "RNAseq Analysis BRN"
+author: "sfhart"
+date: "2022-09-27, revised 2022-12-16"
+output: 
+  html_document:
+    toc: true
+    toc_float: true
+    theme: readable
+    code_folding: hide
+---
+
+
+```{r setup, include = FALSE, message=FALSE, warning=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE)
+library(DESeq2)
+library(tidyverse)
+library(DT)
+library(factoextra)
+library(pheatmap)
+library(clusterProfiler)
+library(msigdbr)
+library(stats)
+library(biomaRt)
+library(EnhancedVolcano)
+```
+
+
+```{r}
+load("SRP038101.Rdata")
+# rse_gene
+```
+
+# Introduction
+
+In this analysis I compare AML3 cells, a cell line derived from acute myeloid leukemia, when treated with Azacytidine against untreated cells in cell culture. Three replicates of each group were characterized by RNAseq, and the read counts for each gene were downloaded from an online database. Below I characterize differential expression between treated and untreated cells, as well as what we can conclude from the results.
+
+<br>
+
+# Results
+
+## 1. Differential gene expression analysis
+
+```{r}
+
+# Make reference table of treatments
+data_treatments <- data.frame(row.names = rse_gene$run, treatment = rse_gene$title) %>%
+  separate(treatment, into = c("treatment", "replicate"))
+ #data_treatments\
+
+# Run DESeq2
+deseq_data <- DESeqDataSetFromMatrix(
+  countData = assay(rse_gene),
+  colData = data_treatments,
+  design = ~treatment
+)
+deseq_run <- DESeq(deseq_data)
+deseq_result <- results(deseq_run, name = "treatment_Untreated_vs_Treated")
+# deseq_result
+
+
+```
+
+```{r}
+
+# list of ENSG gene codes
+  deseq_result_df <- as.data.frame(deseq_result)
+  deseq_result_df$ensg <- rownames(deseq_result_df)
+  genes_ensg <- deseq_result_df %>%
+    separate(ensg, into = c("ensembl_gene_id",NA), sep = "[.]", remove = FALSE)
+  # head(genes_ensg)
+
+# translate to genes
+  ensembl <- useEnsembl(biomart = "genes")
+  ensemble.con <- useMart("ensembl", dataset = "hsapiens_gene_ensembl")
+  gene_translations <- getBM(attributes = c("ensembl_gene_id","external_gene_name"),
+        filters = "ensembl_gene_id",
+        values = genes_ensg$ensembl_gene_id,
+        mart = ensemble.con)
+  
+deseq_df <- left_join(genes_ensg, gene_translations) %>%
+  filter(external_gene_name != "") %>%
+  relocate(external_gene_name)
+  #head(deseq_df)
+
+```
+
+
+
+```{r}
+
+deseq_p0.05 <- deseq_df %>%
+  filter(padj < 0.05) %>%
+  arrange(padj)
+deseq_p0.05_count <- nrow(deseq_p0.05)
+
+# Print out table of 1000 most significant genes
+output_note <- paste0("\nTotal differential expressed genes with adjusted p<0.05: ", deseq_p0.05_count)
+head(deseq_p0.05, n = 1000) %>%
+   dplyr::select(-lfcSE, -stat, -pvalue, -ensembl_gene_id, -ensg) %>%
+    datatable(rownames = FALSE,
+              colnames = c('Gene' = 'external_gene_name',
+                           'Mean basesline expression' = 'baseMean',
+                           'Fold enrichment in untreated cells (log2)' = 'log2FoldChange',
+                           'p-value (adjusted)' = 'padj'),
+              caption = htmltools::tags$caption(
+                  style = 'caption-side: top; text-align: center;',
+                  'Top 1000 differentially expressed genes')
+                  )
+
+```
+
+
+**`r output_note`**
+
+We can see thousands of genes are differential expressed between the treatment and untreated cells. The top 1000 most significant are shown in the table above
+
+<br>
+
+## 2. Principal component analysis (PCA)
+
+```{r}
+deseq_vsd <- vst(deseq_run, blind = FALSE)
+plotPCA(deseq_vsd, intgroup = c("treatment")) +
+  theme_classic() +
+  theme(aspect.ratio=1,
+      plot.title = element_text(hjust = 0.5),
+      axis.text=element_text(size=14,face="bold"),
+      axis.title=element_text(size=16,face="bold"),
+      text=element_text(size=16,face="bold")) 
+```
+
+PCA analysis weights the variables for each sample (here expression for each gene) to maximize the variance in the dataset and plots it along two axes - one for each PCA. Here you can see the first PCA captures the VAST majority of the variance - 97% - and also seperates out the treated from untreated groups, indicating that the treatment is the major source of varaiation in the data. You can see PC2 also captures a very small amount of variance, which may have more to do with batch/strain effects, here if each replicate was divided into two for treatment/no treatment, you can see those pairings line up on the PC2 axis. To reiterate, this effect is tiny compared to the treatment effect.
+
+<br>
+
+## 3. Volcano plot
+
+```{r}
+# OLD PLOT
+  # ggplot(deseq_df, aes(-log2FoldChange, -log10(padj))) +
+  # geom_point() +
+  # xlab("Log2 Fold Change\n(<- untreated vs treated ->)") +
+  # ylab("-Log10 adjusted p-value") +
+  # theme_classic() +
+  # theme(plot.title = element_text(hjust = 0.5),
+  #     axis.text=element_text(size=14,face="bold"),
+  #     axis.title=element_text(size=16,face="bold"),
+  #     text=element_text(size=16,face="bold")) 
+
+mutate(deseq_df, log2FoldChange = -log2FoldChange) %>%
+  EnhancedVolcano(
+    lab = deseq_df$external_gene_name,
+    x = 'log2FoldChange',
+    y = 'padj',
+    pCutoff = 10e-10,
+    labSize = 3.0,
+    drawConnectors = TRUE,
+    widthConnectors = 0.25,    
+    legendPosition = 'right',
+    legendLabSize = 3,
+    legendIconSize = 3.0,
+    title = 'Treated vs untreated AML cells',
+    subtitle = "Differential expression",
+    legendLabels=c('Not sig.','Fold change > 2','p-value > 10e-10',
+      'p-value > 10e-10 & \nFold change > 2')) +
+    theme_classic() +
+  theme(aspect.ratio=0.5,
+      plot.title = element_text(hjust = 0.5),
+      axis.text=element_text(size=14,face="bold"),
+      axis.title=element_text(size=16,face="bold"),
+      text=element_text(size=16,face="bold"),
+      legend.title = element_text("none"))
+```
+
+Here we plot the same differential expression data from the data table above in the form of a volcano plot - the farther out from 0 on the X-axis indicates a greater the difference between treatments, and the higher on the y-axis the more significant the difference. You can see from this plot that most of the significantly differentially expressed genes with a 2 or greater-fold difference (highlighted in red above) are downregulated - that is more highly expressed in untreated cells than treated ones.
+
+<br>
+
+## 4. Heatmap of DEGs
+
+```{r}
+# List of top 10 over- and under-expressed genes
+  downreg <- deseq_p0.05 %>%
+    filter(log2FoldChange > 0) %>%
+    head(n = 10) %>%
+     pull(ensg)
+  upreg <- deseq_p0.05 %>%
+    filter(log2FoldChange < 0) %>%
+    head(n = 10) %>%
+    pull(ensg)
+  # up_down <- c(downreg, upreg)
+  # up_down_labels <- data.frame(Exp_in_treatment = c(rep("downregulated", 10), rep("upregulated", 10)), row.names = up_down)
+
+# Get assay data for top genes and translate names to gene symbols
+  topgenes <- assay(deseq_run)[downreg, ] %>%
+    rbind(., assay(deseq_run)[upreg, ]) %>%
+    log10() 
+  deseq_df_names <- deseq_df %>%
+    dplyr::select(external_gene_name, ensg) %>%
+    column_to_rownames(var = "ensg")
+  rownames(topgenes) <- deseq_df_names[row.names(topgenes),]
+  
+  up_down_labels <- data.frame(Exp_in_treatment = c(rep("downregulated", 10), rep("upregulated", 10)), row.names = rownames(topgenes))
+
+# Plot log-transformed heatmap
+
+    pheatmap(topgenes,
+      cluster_rows = TRUE,
+      show_rownames = TRUE,
+      cluster_cols = TRUE,
+      scale = "row",
+      annotation_col = dplyr::select(data_treatments, treatment),
+      annotation_row = up_down_labels
+    )
+```
+
+Here we take the the top 10 over-expressed DEGs (lowest adjusted p-values), and top 10 under-expressed DEGs and make a heatmap. A heatmap colors in each square according to the expression level for that gene, red indicated higher expression and blue indicating lower expression. Unsurprisingly, the clustering indicated by the trees on the edges indicate that the treatments cluster closer with one another (top - x-axis) and the gene sets that are up- or down-regulated cluster closely with one another (left - y-axis). 
+
+<br>
+
+## 5. Gene set enrichment analysis (GSEA)
+
+For our last analysis we perform gene set enrichment analysis, or GSEA. For GSEA we order all ~40,000 genes by relative expression level, from most over-expressed in the treatment to most under-expressed in the treatment. We then compare the ordering by gene sets, or known biological processes with known genes related to that process. If more genes for that gene set are among the most over-expressed than expected by chance, we can conclude that that gene set is significantly enriched and may have biological significance in relation to the treatment. This can be visualized as you can see below with the dashes along the x-axis indicating each gene in that gene set and their over-expression ranking, then with an enrichment score on the y-axis, which goes up more rapidly when more genes in that gene set are among the top ranked genes. Below we plot the top 5 most signifiacant pathways, and note that 3 or 4 out of 5 of them are related to nuclear import of proteins. There is often overlap between similar gene sets, which may expain this overabundance. However, the massive significance of these gene set enrichements likely indicate an effect of the treatment, which we discuss below in the conclusions.
+
+```{r, results='hide'}
+detach("package:biomaRt", unload = TRUE)
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE, results = FALSE)
+
+# Download gene sets
+  C5_gene_sets <- msigdbr(species = "Homo sapiens", category = "C5")
+  C5_gene_sets <- C5_gene_sets %>%
+    dplyr::select(gs_name, ensembl_gene)
+  # head(C5_gene_sets)
+# Ranked list of genes from our data
+  deseq_ranking_names <- deseq_result %>%
+    as.data.frame() %>%
+    rownames_to_column(var = "gene") %>%
+    separate(gene, into = c("gene_name", NA)) %>%
+    distinct(gene_name, .keep_all = TRUE) %>%
+    filter(!is.na(stat)) %>%
+    mutate(rank = rank(-stat, ties.method = "random")) %>%
+    arrange(desc(rank)) %>%
+    dplyr::select(gene_name, rank) %>%
+    deframe()
+  # head(deseq_ranking_names)
+# Run GSEA
+  gsea_output <- GSEA(
+    geneList = deseq_ranking_names,
+    TERM2GENE = C5_gene_sets
+  )
+# plot top 5
+  gsea_top5 <- as.data.frame(gsea_output) %>%
+    head(n = 5) %>%
+    row.names()
+  #view(gsea_output_df)
+  # for (rep in gsea_top5) {
+  #   gseaplot(gsea_output,
+  #     geneSetID = rep,
+  #     title = rep,
+  #     by = "runningScore"
+  #   ) %>%
+  #     print()
+  # }
+  plot_gsea <- function(geneset){
+    gseaplot(gsea_output,
+      geneSetID = geneset,
+      title = geneset,
+      by = "runningScore"
+    ) #%>%
+      #print()
+     }
+  
+lapply(gsea_top5, plot_gsea)
+
+```
+
+<br>
+
+# Conclusions
+
+This data set was comparing AML cells in culture with and without treatment with Azacytidine, a hypomethylating chemotherapy agent. This treatment resulted in very significant differences between the treatment sets, as evidenced in particular by the number of significantly differentially expressed genes (>7500) and obvious clustering between sets in the PCA. This is not surprising, given that hypomethylation would be expected to affect gene expression genome-wide. Interestingly, this resulted in overall more significant DOWN-regulation than UP-regulation, which was the opposite of what I would have expected (I generally associate hypomethylation with higher expression of genes). This may not actually be a result of overall down-regulation, but some genes escaping de-methylation and thus maintaining their expression, thus appearing up-regulated, since the same amount of RNA is sequenced in total either way and the expression levels are relative to average expression in that individual sequencing run. In the gene set enrichment analysis, a number of the top hits were related to nuclear localization of proteins, which means that the chemotherapy agent likely led to the relative overexpression of these genes. This may indicate that the chemotherapy leads the cell to express these genes and import proteins into the nucleus, perhaps as either or a survival mechanism of the cell in response to treatment, or alternatively this may be a reflection of the cytotoxic effects of the chemotherapy agent itself. I would be interested to knock down these up-regulated pathways and see whether it resulted in more or less cell death in treated cells to test these two possibilities. I would also be interested to follow up on the finding by characterizing AML expression within patients (this data is from cell culture), before and after chemotherapy treatment to see if any of the results here are recapitulated in relevant settings for patient treatment. 
+
